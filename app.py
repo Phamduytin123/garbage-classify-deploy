@@ -1,25 +1,66 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 from werkzeug.utils import secure_filename
 import numpy as np
 from tensorflow.keras.models import load_model
 from PIL import Image
+import tensorflow as tf
+from keras.utils import custom_object_scope
+
 
 # Khởi tạo Flask app
 app = Flask(__name__)
 app.config["ALLOWED_EXTENSIONS"] = {"png", "jpg", "jpeg"}
 
-# Load mô hình đã huấn luyện
-model_path = "model/trash_model.h5"
-model = load_model(model_path)
+from keras.layers import Layer
+
+
+class TensorFlowOpLayer(Layer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def build(self, input_shape):
+        # Custom build logic here
+        pass
+
+    def call(self, inputs, **kwargs):
+        # Custom call logic here (e.g., apply TensorFlow op)
+        return inputs
+
+    @classmethod
+    def from_config(cls, config):
+        # Override to handle custom config
+        # Ignore or process unrecognized arguments
+        config.pop("node_def", None)  # Remove 'node_def' from config
+        config.pop("constants", None)  # Remove 'constants' from config
+        return cls(**config)
+
+
+# Define your models dictionary
+models = {
+    "ResNet50": "model/resnet50.h5",
+    "MobileNet": "model/densenet.h5",
+    "EfficentNet": "model/efficientnet.keras",
+    "DenseNet": "model/densenet.h5",
+}
+
+# Use custom_object_scope to load the model with the custom layer
+with custom_object_scope({"TensorFlowOpLayer": TensorFlowOpLayer}):
+    loaded_models = {name: load_model(path) for name, path in models.items()}
 
 # Tên các loại rác
 class_names = [
+    "Battery",
+    "Biological",
+    "Brown-glass",
     "Cardboard",
-    "Glass",
+    "Clothes",
+    "Green-glass",
     "Metal",
     "Paper",
     "Plastic",
+    "Shoes",
     "Trash",
+    "White-glass",
 ]  # Cập nhật theo mô hình
 
 
@@ -32,11 +73,21 @@ def allowed_file(filename):
 
 
 # Xử lý ảnh từ luồng tải lên
-def preprocess_image(file_stream):
+def preprocess_image(file_stream, model_name):
     # Mở ảnh từ luồng
     img = Image.open(file_stream).convert("RGB")
-    # Thay đổi kích thước về (384, 384)
-    img = img.resize((384, 384))
+
+    # Chuyển kích thước ảnh phù hợp với từng mô hình
+    if model_name == "ResNet50":
+        img = img.resize((384, 384))
+        # ResNet50 yêu cầu kích thước 224x224
+    else:
+        if model_name == "MobileNet":
+            # img = img.resize((128, 128))
+            img = img.resize((224, 224))
+        else:
+            img = img.resize((224, 224))
+
     # Chuyển thành mảng numpy
     img_array = np.array(img)
     # Chuẩn hóa giá trị pixel
@@ -56,26 +107,31 @@ def index():
 @app.route("/predict", methods=["POST"])
 def predict():
     if "file" not in request.files:
-        return "Không tìm thấy file", 400
+        return jsonify({"error": "Không tìm thấy file"}), 400
 
     file = request.files["file"]
     if file.filename == "":
-        return "Không có file nào được chọn", 400
+        return jsonify({"error": "Không có file nào được chọn"}), 400
 
     if file and allowed_file(file.filename):
         try:
             # Xử lý ảnh trực tiếp từ luồng
-            img_array = preprocess_image(file.stream)
+            results = []
+            for model_name, model in loaded_models.items():
+                # Xử lý ảnh cho mỗi mô hình
+                img_array = preprocess_image(file.stream, model_name)
 
-            # Dự đoán
-            predictions = model.predict(img_array)
-            predicted_class = class_names[np.argmax(predictions)]
+                # Dự đoán với mô hình
+                predictions = model.predict(img_array)
+                predicted_class = class_names[np.argmax(predictions)]
+                results.append({"model": model_name, "prediction": predicted_class})
 
-            return f"Kết quả dự đoán: {predicted_class}"
+            # Trả về kết quả dưới dạng JSON
+            return jsonify({"predictions": results})
         except Exception as e:
-            return f"Lỗi trong quá trình xử lý: {str(e)}", 500
+            return jsonify({"error": f"Lỗi trong quá trình xử lý: {str(e)}"}), 500
 
-    return "File không hợp lệ", 400
+    return jsonify({"error": "File không hợp lệ"}), 400
 
 
 if __name__ == "__main__":

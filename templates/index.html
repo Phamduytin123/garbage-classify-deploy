@@ -132,8 +132,15 @@
                 });
 
                 if (response.ok) {
-                    const resultText = await response.text();
-                    resultDiv.textContent = `${resultText}`;
+                    const result = await response.json();  // Đọc kết quả dưới dạng JSON
+                    resultDiv.innerHTML = '';  // Làm sạch kết quả cũ trước khi hiển thị
+
+                    // Hiển thị các dự đoán từ các mô hình
+                    result.predictions.forEach(prediction => {
+                        const modelResult = document.createElement('p');
+                        modelResult.textContent = `${prediction.model}: ${prediction.prediction}`;
+                        resultDiv.appendChild(modelResult);
+                    });
                 } else {
                     resultDiv.textContent = 'Lỗi dự đoán. Vui lòng thử lại.';
                 }
